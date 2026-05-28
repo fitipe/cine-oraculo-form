@@ -105,6 +105,15 @@ function addFiles(fileList){
       <button class="x" title="remover">×</button></div><div class="bar"><i></i></div>`;
     li.querySelector('.name').textContent = file.name;
     $('list').appendChild(li);
+    // arquivo vazio: placeholder do iCloud (original não baixado no aparelho).
+    // marca erro e NÃO entra na fila — evita subir 0 byte pro R2.
+    if (file.size === 0){
+      li.classList.add('err');
+      li.querySelector('.pct').textContent = 'vazio · baixe do iCloud';
+      li.querySelector('.bar i').style.width = '100%';
+      li.querySelector('.x').addEventListener('click', () => li.remove());
+      continue;
+    }
     // arquivo acima do limite: marca erro e NÃO entra na fila de envio
     if (file.size > MAX_MB * 1048576){
       li.classList.add('err');
@@ -135,7 +144,7 @@ async function enviarTodos(){
     while (i < pend.length){
       const item = pend[i++];
       try { await enviarUm(item, sender); }
-      catch(e){ falhas++; item.li.classList.add('err'); item.state='erro'; item.pct.textContent='falhou'; }
+      catch(e){ falhas++; item.li.classList.add('err'); item.state='erro'; item.pct.textContent = (e && e.message) || 'falhou'; }
     }
   }
   await Promise.all(Array.from({length:MAX_PARALELO}, worker));
@@ -146,6 +155,14 @@ async function enviarTodos(){
 
 async function enviarUm(item, sender){
   item.state='enviando';
+  // 0) garante que o arquivo está MESMO no aparelho. iCloud "Otimizar Armazenamento"
+  //    entrega placeholders: o File tem nome/tamanho, mas ler o corpo falha (ou vem
+  //    vazio). Lê os primeiros bytes — força o download do iCloud e detecta arquivo
+  //    ilegível ANTES de subir 0 byte pro R2 (que aceitaria e devolveria 200).
+  try {
+    const probe = await item.file.slice(0, 65536).arrayBuffer();
+    if (probe.byteLength === 0) throw 0;
+  } catch { throw new Error('vazio (iCloud?)'); }
   // 1) pede uma URL assinada pro Worker
   const r = await fetch(WORKER_URL, {
     method:'POST', headers:{'Content-Type':'application/json'},
@@ -156,11 +173,17 @@ async function enviarUm(item, sender){
   // 2) sobe o arquivo direto pro R2 (com barra de progresso)
   await new Promise((res, rej) => {
     const xhr = new XMLHttpRequest();
+    let sent = 0;
     xhr.open('PUT', url, true);
     if (item.file.type) xhr.setRequestHeader('Content-Type', item.file.type);
-    xhr.upload.onprogress = e => { if (e.lengthComputable){
+    xhr.upload.onprogress = e => { sent = e.loaded; if (e.lengthComputable){
       const p = Math.round(e.loaded/e.total*100); item.bar.style.width=p+'%'; item.pct.textContent=p+'%'; } };
-    xhr.onload = () => (xhr.status>=200 && xhr.status<300) ? res() : rej(new Error('PUT '+xhr.status));
+    xhr.onload = () => {
+      if (xhr.status<200 || xhr.status>=300) return rej(new Error('PUT '+xhr.status));
+      // status 200 não basta: um corpo vazio também devolve 200. exige bytes enviados.
+      if (sent === 0) return rej(new Error('0 bytes'));
+      res();
+    };
     xhr.onerror = () => rej(new Error('rede'));
     xhr.send(item.file);
   });
