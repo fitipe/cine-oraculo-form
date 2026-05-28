@@ -55,18 +55,25 @@
 <div class="wrap">
   <header>
     <div class="kicker">cine-oráculo</div>
-    <h1>Participe da projeção</h1>
-    <p class="sub">Envie foto, vídeo ou áudio do evento. O que você mandar entra,
-      recombinado em tempo real, na projeção do cine-oráculo.</p>
+    <h1>URBICENTROS</h1>
+    <p class="sub">Para participar, envie registros em</p>
+    <p class="sub">foto(s)</p>
+    <p class="sub">e/ou</p>
+    <p class="sub">vídeo(s)</p>
+    <p class="sub">e/ou</p>
+    <p class="sub">áudios</p>
+    <p class="sub">criados por você no centro da cidade ao longo do evento</p>
+
+    
   </header>
 
   <label class="field" for="sender">Seu nome (opcional)</label>
-  <input type="text" id="sender" placeholder="ex.: maria, ou deixe em branco" autocomplete="name">
+  <input type="text" id="sender" placeholder="..." autocomplete="name">
 
   <label class="field">Arquivos</label>
   <div class="drop" id="drop">
-    <div class="big">Toque para escolher</div>
-    <div class="small">foto · vídeo · áudio — pode mandar vários</div>
+    <div class="big">Clique aqui para escolher</div>
+    <div class="small">foto · vídeo · áudio (máx 150mb por arquivo)</div>
   </div>
   <input type="file" id="pick" multiple accept="image/*,video/*,audio/*">
 
@@ -74,10 +81,9 @@
 
   <button class="send" id="send" disabled>Enviar</button>
 
-  <div class="msg ok"  id="ok">Recebido! Obrigado por participar 🙏 Pode mandar mais se quiser.</div>
+  <div class="msg ok"  id="ok">Recebido! Agradecemos a participação ~ as exibições serão durante os saraus do evento, dias 28 e 29 de maio.  </div>
   <div class="msg err" id="err"></div>
 
-  <footer>Os arquivos vão direto para o artista. Ninguém mais vê os seus envios.</footer>
 </div>
 
 <script>
@@ -86,6 +92,7 @@ const WORKER_URL = "https://cine-oraculo-upload.fitbritto.workers.dev";
 // =====================================================================
 
 const MAX_PARALELO = 3;
+const MAX_MB = 150;            // limite de tamanho por arquivo (precisa bater com o worker.js)
 let fila = [];                 // {file, li, bar, pct, state}
 const $ = id => document.getElementById(id);
 
@@ -101,12 +108,21 @@ function addFiles(fileList){
     li.innerHTML = `<div class="top"><span class="name"></span><span class="pct">0%</span>
       <button class="x" title="remover">×</button></div><div class="bar"><i></i></div>`;
     li.querySelector('.name').textContent = file.name;
+    $('list').appendChild(li);
+    // arquivo acima do limite: marca erro e NÃO entra na fila de envio
+    if (file.size > MAX_MB * 1048576){
+      li.classList.add('err');
+      li.querySelector('.pct').textContent = `${Math.round(file.size/1048576)}MB · máx ${MAX_MB}`;
+      li.querySelector('.bar i').style.width = '100%';
+      li.querySelector('.x').addEventListener('click', () => li.remove());
+      continue;
+    }
     const item = { file, li, bar: li.querySelector('.bar i'), pct: li.querySelector('.pct'), state:'pronto' };
     li.querySelector('.x').addEventListener('click', () => {
       if (item.state==='enviando') return;
       fila = fila.filter(x=>x!==item); li.remove(); refresh();
     });
-    fila.push(item); $('list').appendChild(li);
+    fila.push(item);
   }
   refresh();
 }
@@ -137,7 +153,7 @@ async function enviarUm(item, sender){
   // 1) pede uma URL assinada pro Worker
   const r = await fetch(WORKER_URL, {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ filename:item.file.name, contentType:item.file.type||'application/octet-stream', sender })
+    body: JSON.stringify({ filename:item.file.name, contentType:item.file.type||'application/octet-stream', sender, size:item.file.size })
   });
   if (!r.ok) throw new Error('sign falhou');
   const { url } = await r.json();
